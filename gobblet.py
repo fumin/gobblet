@@ -132,7 +132,9 @@ class Observer:
     def __init__(self, game):
         ps = game.num_players()
         pieces = [
-                ["board", -1, [_BOARD_WIDTH, _BOARD_WIDTH, _NUM_SIZES, ps]]]
+                ["player", -1, [1]],
+                ["board", -1, [_BOARD_WIDTH, _BOARD_WIDTH, _NUM_SIZES, ps]],
+                ]
         for i in range(len(pieces)):
             pieces[i][1] = np.prod(pieces[i][2])
 
@@ -150,6 +152,8 @@ class Observer:
     def set_from(self, state, player):
         """Updates `tensor` and `dict` to reflect `state` from PoV of `player`."""
         self.tensor.fill(0)
+        if state.current_player() == 1:
+            self.dict["player"][0] = 1
         for y in range(state.board.shape[0]):
             for x in range(state.board.shape[1]):
                 for size in range(state.board.shape[2]):
