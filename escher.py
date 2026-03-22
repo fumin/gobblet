@@ -532,6 +532,8 @@ def train(cfg, agent):
         agent.t += 1
         _train_regret(cfg, agent)
 
+        if agent.t % 2 == 0 and agent.t % cfg.evaluation_interval != 0:
+            _save_checkpoint(cp_dir, agent)
         if agent.t % cfg.evaluation_interval == 0:
             _train_avg_policy(cfg, agent)
             _save_checkpoint(cp_dir, agent)

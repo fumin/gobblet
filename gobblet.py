@@ -78,6 +78,8 @@ class State(pyspiel.State):
                 for dstx in range(self.board.shape[1]):
                     dst = (dsty, dstx)
                     dst_piece = _largest_piece(self.board[dst])
+                    if dst_piece.player == player:
+                        continue
                     if src_size > dst_piece.size:
                         legals.append(Action(reserves=src_size, dst=dst).idx())
 
@@ -92,6 +94,8 @@ class State(pyspiel.State):
                     for dstx in range(self.board.shape[1]):
                         dst = (dsty, dstx)
                         dst_piece = _largest_piece(self.board[dst])
+                        if dst_piece.player == player:
+                            continue
                         if src_piece.size > dst_piece.size:
                             legals.append(Action(src=src, dst=dst).idx())
 
@@ -277,6 +281,39 @@ def _board_to_string(board):
     board_str = board_str[:-1]
 
     return board_str
+
+
+def _state_from_tensor(board):
+    game = pyspiel.load_game(_GAME_TYPE.short_name)
+    s = State(game)
+    num_players = game.num_players()
+
+    i = -num_players
+    for y in range(_BOARD_WIDTH):
+        for x in range(_BOARD_WIDTH):
+            for sz in range(_NUM_SIZES):
+                i += num_players
+
+                placed = []
+                for p in range(num_players):
+                    if board[i+p] == 1:
+                        placed.append(p)
+                if len(placed) == 0:
+                    continue
+                elif len(placed) == 1:
+                    player = placed[0]
+                    if s.reserves[player, sz] <= 0:
+                        raise Exception("{} {} {} {}".format(y, x, sz, placed))
+                    s.reserves[player, sz] -= 1
+                    s.board[y, x, sz] = player
+                else:
+                    raise Exception("{} {} {} {}".format(y, x, sz, placed))
+
+    if _line_player(s.board) != pyspiel.PlayerId.INVALID:
+            s._is_terminal = True
+            s._player0_score = 1.0 if s._cur_player == 0 else -1.0
+
+    return s
 
 
 pyspiel.register_game(_GAME_TYPE, Game)
