@@ -41,12 +41,16 @@ import util
 
 
 class TrunkMLP(torch.nn.Module):
+    """TrunkMLP is a MLP with a shared trunk."""
+
     def __init__(self, trunk, hidden_sizes, output_size):
         super().__init__()
         self.trunk = trunk
         input_size = list(trunk.model.modules())[-2].out_features
         self.head = deep_cfr.MLP(input_size, hidden_sizes, output_size)
+
     def forward(self, x):
+        """forward performs the forward pass."""
         return self.head(self.trunk(x))
 
 
@@ -100,7 +104,7 @@ class Agent:
 
         # Get game state dimensions.
         state = game.new_initial_state()
-        history_dim = _state_history(game.num_players(), state).shape[0]
+        self.history_dim = _state_history(game.num_players(), state).shape[0]
         obs_dim = game.information_state_tensor_size()
         action_dim = game.num_distinct_actions()
 
@@ -128,13 +132,15 @@ class Agent:
         ]
 
         # Initialize value network.
-        history = np.zeros(history_dim, dtype=float)
+        history = np.zeros(self.history_dim, dtype=float)
         sav = StateActionValue(state=history, action=scalar, value=scalar)
         self.value_buffers = [
                 ReservoirBuffer.init(cfg.value_memory_capacity, sav)
                 for _ in range(game.num_players())
         ]
-        self.value_trunk = deep_cfr.MLP(history_dim, cfg.trunk[:-1], cfg.trunk[-1], torch.nn.ReLU())
+        self.value_trunk = deep_cfr.MLP(
+                self.history_dim,
+                cfg.trunk[:-1], cfg.trunk[-1], torch.nn.ReLU())
         self.value_nets = [
                 TrunkMLP(self.value_trunk, cfg.value_net, 1) for _ in range(game.num_players())
         ]
@@ -170,10 +176,11 @@ class Agent:
 
         return probs.cpu().numpy()
 
-    def _set_device(self, device):
+    def set_device(self, device):
+        """set_device sets the device of the agent."""
         self.device = device
         self.avg_policy_net.to(device)
-        for i in range(len(self.regret_nets)):
+        for i, _ in enumerate(self.regret_nets):
             self.regret_nets[i].to(device)
             self.value_nets[i].to(device)
 
@@ -219,9 +226,10 @@ def _train_avg_policy(cfg, agent):
             cfg.summary_writer.add_scalar(k, v.compute(), agent.avg_policy_t)
 
 
-def _gather_regret_data(game, agent, player):
+def _gather_regret_data(cfg, agent, player):
     """Gathers regret data for training."""
     start_time = time.time()
+    game = cfg.game
     for _ in range(agent.cfg.regret_traversals):
         state = game.new_initial_state()
         agent.num_touched += 1
@@ -255,14 +263,17 @@ def _gather_regret_data(game, agent, player):
             action = np.random.choice(range(len(sample_policy)), p=sample_policy)
             state = state.child(action)
             agent.num_touched += 1
-    logging.info("gather regret %d player %d duration %d secs", agent.t, player, int(time.time()-start_time))
+    if cfg.verbose:
+        logging.info(
+                "gather regret %d player %d duration %d secs",
+                agent.t, player, int(time.time()-start_time))
 
 
 def _train_regret(cfg, agent):
     """Trains the regret network."""
     for player in range(cfg.game.num_players()):
         _train_value(cfg, agent, player)
-        _gather_regret_data(cfg.game, agent, player)
+        _gather_regret_data(cfg, agent, player)
 
         start_time = time.time()
         num_epoch = 8
@@ -301,21 +312,24 @@ def _train_regret(cfg, agent):
                 loss.backward()
                 optimizer.step()
 
-                k = "regret/{}/loss".format(player)
+                k = f"regret/{player}/loss"
                 metrics = util.update_metric(metrics, k, loss)
 
             for k, v in metrics.items():
                 cfg.summary_writer.add_scalar(k, v.compute(), agent.regret_t)
-        logging.info("train regret %d player %d duration %d secs", agent.t, player, int(time.time()-start_time))
+        if cfg.verbose:
+            logging.info(
+                    "train regret %d player %d duration %d secs",
+                    agent.t, player, int(time.time()-start_time))
 
 
-def _gather_value_data(game, agent, player):
+def _gather_value_data(cfg, agent, player):
     """Gathers value data for training."""
     start_time = time.time()
     value_buffer = agent.value_buffers[player]
     value_buffer.clear()
     for _ in range(agent.cfg.value_traversals):
-        state = game.new_initial_state()
+        state = cfg.game.new_initial_state()
         agent.num_touched += 1
         transitions = []
         while True:
@@ -341,7 +355,7 @@ def _gather_value_data(game, agent, player):
                 importance = policy[action] / sample_policy[action]
 
             # Add transition.
-            history = _state_history(game.num_players(), state)
+            history = _state_history(cfg.game.num_players(), state)
             returns = np.array(state.returns(), dtype=float)
             tn = Transition(
                     history=history, importance=importance, action=action, returns=returns
@@ -363,12 +377,15 @@ def _gather_value_data(game, agent, player):
                             state=tn.history, action=tn.action, value=value[player]
                     )
             )
-    logging.info("gather value %d player %d duration %d secs", agent.t, player, int(time.time()-start_time))
+    if cfg.verbose:
+        logging.info(
+                "gather value %d player %d duration %d secs",
+                agent.t, player, int(time.time()-start_time))
 
 
 def _train_value(cfg, agent, player):
     """Trains the value network."""
-    _gather_value_data(cfg.game, agent, player)
+    _gather_value_data(cfg, agent, player)
 
     start_time = time.time()
     num_epoch = 8
@@ -406,12 +423,15 @@ def _train_value(cfg, agent, player):
             loss.backward()
             optimizer.step()
 
-            k = "value/{}/loss".format(player)
+            k = f"value/{player}/loss"
             metrics = util.update_metric(metrics, k, loss)
 
         for k, v in metrics.items():
             cfg.summary_writer.add_scalar(k, v.compute(), agent.value_t)
-    logging.info("train value %d player %d duration %d secs", agent.t, player, int(time.time()-start_time))
+    if cfg.verbose:
+        logging.info(
+                "train value %d player %d duration %d secs",
+                agent.t, player, int(time.time()-start_time))
 
 
 def _get_avg_policy_loss(agent, batch):
@@ -488,15 +508,17 @@ def _get_regret(agent, state, policy, num_players):
     player = state.current_player()
 
     mask = state.legal_actions_mask()
-    children_values = np.zeros(len(mask), dtype=float)
+    history = np.zeros([len(mask), agent.history_dim], dtype=float)
     for a, m in enumerate(mask):
         if m == 1:
             child = state.child(a)
+            history[a] = _state_history(num_players, child)
 
-            with torch.no_grad():
-                history = _state_history(num_players, child)
-                x = torch.from_numpy(history).to(torch.float32).to(agent.device)
-                children_values[a] = agent.value_nets[player](x)
+    with torch.no_grad():
+        x = torch.from_numpy(history).to(torch.float32).to(agent.device)
+        vals = agent.value_nets[player](x)
+        vals = torch.squeeze(vals, dim=[1])
+        children_values = vals.cpu().numpy()
 
     value = np.sum(policy * children_values)
     regret = children_values - value
@@ -518,10 +540,16 @@ class TrainConfig:
         self.evaluation_interval = 1
         self.nashconv = False
         self.games_vs_random = 1000
+        self.verbose = False
 
         self.run_dir = ""
 
+        # Inferred properties.
+        self.summary_writer = None
+        self.device = None
+
     def setup(self):
+        """setup sets up the inferred properties."""
         self.summary_writer = torch.utils.tensorboard.SummaryWriter(self.run_dir)
         self.device = torch.device(self.device_name)
 
@@ -534,16 +562,15 @@ def train(cfg, agent):
             agent: (Agent) The Escher agent to be trained.
     """
     cp_dir = os.path.join(cfg.run_dir, "checkpoint")
-    _load_checkpoint(agent, cp_dir)
-    agent._set_device(cfg.device)
+    _load_checkpoint(agent, cp_dir, True)
+    agent.set_device(cfg.device)
     _save_agent_config(cfg.run_dir, agent)
 
-    metrics = {}
     for _ in range(cfg.iterations):
         agent.t += 1
         _train_regret(cfg, agent)
 
-        if agent.t % 2 == 0 and agent.t % cfg.evaluation_interval != 0:
+        if agent.t % 5 == 0 and agent.t % cfg.evaluation_interval != 0:
             _save_checkpoint(cp_dir, agent)
         if agent.t % cfg.evaluation_interval == 0:
             _train_avg_policy(cfg, agent)
@@ -656,8 +683,8 @@ def _save_agent_config(run_dir, agent):
     jstr = json.dumps(agent.cfg.__dict__)
     cfg_dir = os.path.join(run_dir, "config")
     os.makedirs(cfg_dir, exist_ok=True)
-    cfg_path = os.path.join(cfg_dir, "config_{:06d}.json".format(agent.t))
-    with open(cfg_path, "w") as f:
+    cfg_path = os.path.join(cfg_dir, f"config_{agent.t:06d}.json")
+    with open(cfg_path, "w", encoding="utf-8") as f:
         f.write(jstr)
 
 
@@ -667,19 +694,16 @@ def _save_checkpoint(cp_root, agent):
     os.makedirs(cp_dir, exist_ok=True)
 
     # Buffers.
-    import gc
-    gc.collect()
     _save_buffer(os.path.join(cp_dir, "avg_policy_buffer"), agent.avg_policy_buffer)
     for p, _ in enumerate(agent.regret_nets):
-        gc.collect()
         _save_buffer(os.path.join(cp_dir, f"regret_buffer_{p}"), agent.regret_buffers[p])
 
     cp = {}
     cp["t"] = agent.t
     cp["avg_policy_net"] = agent.avg_policy_net.state_dict()
     for p, _ in enumerate(agent.regret_nets):
-        cp["regret_net_{}".format(p)] = agent.regret_nets[p].state_dict()
-        cp["value_net_{}".format(p)] = agent.value_nets[p].state_dict()
+        cp[f"regret_net_{p}"] = agent.regret_nets[p].state_dict()
+        cp[f"value_net_{p}"] = agent.value_nets[p].state_dict()
     cp["num_touched"] = agent.num_touched
     cp["avg_policy_t"] = agent.avg_policy_t
     cp["regret_t"] = agent.regret_t
@@ -689,7 +713,7 @@ def _save_checkpoint(cp_root, agent):
     util.delete_old_checkpoints(cp_root)
 
 
-def _load_checkpoint(agent, cp_root):
+def _load_checkpoint(agent, cp_root, with_buffers):
     torch.serialization.add_safe_globals([StateActionValue, StateRegret, Behaviour])
 
     cp, cp_path = util.load_checkpoint(cp_root)
@@ -700,26 +724,43 @@ def _load_checkpoint(agent, cp_root):
     agent.t = cp["t"]
     agent.avg_policy_net.load_state_dict(cp["avg_policy_net"])
     for p, _ in enumerate(agent.regret_nets):
-        agent.regret_nets[p].load_state_dict(cp["regret_net_{}".format(p)])
-        agent.value_nets[p].load_state_dict(cp["value_net_{}".format(p)])
+        agent.regret_nets[p].load_state_dict(cp[f"regret_net_{p}"])
+        agent.value_nets[p].load_state_dict(cp[f"value_net_{p}"])
     agent.num_touched = cp["num_touched"]
     agent.avg_policy_t = cp["avg_policy_t"]
     agent.regret_t = cp["regret_t"]
     agent.value_t = cp["value_t"]
 
-    # Buffers.
-    cp_dir = os.path.dirname(cp_path)
-    _load_buffer(agent.avg_policy_buffer, os.path.join(cp_dir, "avg_policy_buffer"))
-    for p, _ in enumerate(agent.regret_nets):
-        _load_buffer(agent.regret_buffers[p], os.path.join(cp_dir, f"regret_buffer_{p}"))
+    if with_buffers:
+        cp_dir = os.path.dirname(cp_path)
+        _load_buffer(agent.avg_policy_buffer, os.path.join(cp_dir, "avg_policy_buffer"))
+        for p, _ in enumerate(agent.regret_nets):
+            _load_buffer(agent.regret_buffers[p], os.path.join(cp_dir, f"regret_buffer_{p}"))
 
     logging.info("loaded checkpoint %s", cp_path)
 
 
-def _save_buffer(fpath, buffer):
-    torch.save(buffer.__dict__, fpath)
+def _save_buffer(dst_dir, buffer):
+    os.makedirs(dst_dir, exist_ok=True)
+    for k, v in buffer.__dict__.items():
+        if k == "experience":
+            epr_dir = os.path.join(dst_dir, "experience")
+            os.makedirs(epr_dir, exist_ok=True)
+            for ek in v._fields:
+                fpath = os.path.join(epr_dir, ek+".npy")
+                np.save(fpath, getattr(v, ek))
+        else:
+            fpath = os.path.join(dst_dir, k+".npy")
+            np.save(fpath, v)
 
 
-def _load_buffer(buffer, fpath):
-    cp = torch.load(fpath)
-    buffer.__dict__.update(cp)
+def _load_buffer(buffer, dst_dir):
+    for k, v in buffer.__dict__.items():
+        if k == "experience":
+            epr_dir = os.path.join(dst_dir, "experience")
+            for ek in v._fields:
+                fpath = os.path.join(epr_dir, ek+".npy")
+                getattr(v, ek)[:] = np.load(fpath)
+        else:
+            fpath = os.path.join(dst_dir, k+".npy")
+            buffer.__dict__[k] = np.load(fpath)

@@ -190,16 +190,19 @@ class Observer:
 
     def set_from(self, state, player):
         """Updates `tensor` and `dict` to reflect `state` from PoV of `player`."""
-        del player
         self.tensor.fill(0)
-        if (not self._egocentric_obs_tensor) and state.current_player() == 1:
-            self.dict["player"][0] = 1
+
+        p = state.current_player()
+        if self._egocentric_obs_tensor and player == 1:
+            p = 1 - p
+        self.dict["player"][0] = p
+
         for y in range(state.board.shape[0]):
             for x in range(state.board.shape[1]):
                 for size in range(state.board.shape[2]):
                     p = state.board[y, x, size]
                     if p != pyspiel.PlayerId.INVALID:
-                        if self._egocentric_obs_tensor:
+                        if self._egocentric_obs_tensor and player == 1:
                             p = 1 - p
                         self.dict["board"][y, x, size, p] = 1
 

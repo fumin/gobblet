@@ -1,0 +1,209 @@
+# Copyright 2026 DeepMind Technologies Limited
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Tests for Python gobblet."""
+
+import typing
+
+from absl.testing import absltest
+
+import pyspiel
+import gobblet
+
+
+class GobbletTest(absltest.TestCase):
+    """Tests for gobblet game."""
+
+    def test_game(self):
+        """Checks that information states and legal actions are correct."""
+        sas = [
+                StateAction([0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             ],
+                            [1, 1, 1, 1, 1, 1, 1, 1, 1,
+                             1, 1, 1, 1, 1, 1, 1, 1, 1,
+                             1, 1, 1, 1, 1, 1, 1, 1, 1,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             ],
+                            gobblet.Action(reserves=1, dst=[1, 1])),
+                StateAction([1,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 1, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             ],
+                            [1, 1, 1, 1, 0, 1, 1, 1, 1,
+                             1, 1, 1, 1, 0, 1, 1, 1, 1,
+                             1, 1, 1, 1, 1, 1, 1, 1, 1,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             ],
+                            gobblet.Action(reserves=0, dst=[2, 2])),
+                StateAction([0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 1, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 1, 0, 0, 0, 0,
+                             ],
+                            [1, 1, 1, 1, 0, 1, 1, 1, 0,
+                             1, 1, 1, 1, 0, 1, 1, 1, 1,
+                             1, 1, 1, 1, 0, 1, 1, 1, 1,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             1, 1, 1, 1, 0, 1, 1, 1, 1,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             ],
+                            gobblet.Action(reserves=-1, dst=[-1, -1])),
+                ]
+        game = pyspiel.load_game("gobblet")
+        state = game.new_initial_state()
+        for sa in sas:
+            self.assertEqual(state.information_state_tensor(), sa.state)
+            self.assertEqual(state.legal_actions_mask(), sa.mask)
+            state.apply_action(sa.action.idx())
+
+    def test_egocentric(self):
+        """Checks that egocentric information states are correct."""
+        sas = [
+                StateAction([0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             ],
+                            [1, 1, 1, 1, 1, 1, 1, 1, 1,
+                             1, 1, 1, 1, 1, 1, 1, 1, 1,
+                             1, 1, 1, 1, 1, 1, 1, 1, 1,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             ],
+                            gobblet.Action(reserves=1, dst=[1, 1])),
+                StateAction([0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 1, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             ],
+                            [1, 1, 1, 1, 0, 1, 1, 1, 1,
+                             1, 1, 1, 1, 0, 1, 1, 1, 1,
+                             1, 1, 1, 1, 1, 1, 1, 1, 1,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             ],
+                            gobblet.Action(reserves=0, dst=[2, 2])),
+                StateAction([0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 1, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0,
+                             0, 1, 0, 0, 0, 0,
+                             ],
+                            [1, 1, 1, 1, 0, 1, 1, 1, 0,
+                             1, 1, 1, 1, 0, 1, 1, 1, 1,
+                             1, 1, 1, 1, 0, 1, 1, 1, 1,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             1, 1, 1, 1, 0, 1, 1, 1, 1,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             0, 0, 0, 0, 0, 0, 0, 0, 0,
+                             ],
+                            gobblet.Action(reserves=-1, dst=[-1, -1])),
+                ]
+        game = pyspiel.load_game("gobblet", {"egocentric_obs_tensor": True})
+        state = game.new_initial_state()
+        for sa in sas:
+            self.assertEqual(state.information_state_tensor(), sa.state)
+            self.assertEqual(state.legal_actions_mask(), sa.mask)
+            state.apply_action(sa.action.idx())
+
+
+class StateAction(typing.NamedTuple):
+    """StateAction holds a game's state and actions."""
+    state: list
+    mask: list
+    action: gobblet.Action
+
+
+if __name__ == "__main__":
+    absltest.main()
