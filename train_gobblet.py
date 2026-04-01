@@ -20,7 +20,7 @@ def main():
     parser.add_argument("-d", dest="run_dir", default="runs/test")
     args = parser.parse_args()
 
-    game = pyspiel.load_game("gobblet")
+    game = pyspiel.load_game("gobblet", {"egocentric_obs_tensor": True})
 
     cfg = escher.Config()
     cfg.value_traversals = 4096

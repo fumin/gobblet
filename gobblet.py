@@ -1,3 +1,26 @@
+# Copyright 2026 DeepMind Technologies Limited
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Gobblet implemented in Python.
+
+Gobblet is a two player perfect information game.
+It is similar to tic-tac-toe, but with a capturing flavour.
+
+Please see below for more information:
+https://en.wikipedia.org/wiki/Gobblet
+"""
+
 import numpy as np
 import pyspiel
 
@@ -6,6 +29,11 @@ _NUM_SIZES = 3
 _PIECES_PER_SIZE = 2
 _BOARD_WIDTH = 3
 _BOARD_SIZE = _BOARD_WIDTH * _BOARD_WIDTH
+
+_DEFAULT_PARAMS = {
+        "egocentric_obs_tensor": False,
+}
+
 _GAME_TYPE = pyspiel.GameType(
         short_name="gobblet",
         long_name="gobblet, a capturing variant of tic-tac-toe",
@@ -20,7 +48,7 @@ _GAME_TYPE = pyspiel.GameType(
         provides_information_state_tensor=True,
         provides_observation_string=True,
         provides_observation_tensor=True,
-        parameter_specification={})
+        parameter_specification=_DEFAULT_PARAMS)
 _GAME_INFO = pyspiel.GameInfo(
         num_distinct_actions=(_NUM_SIZES+_BOARD_SIZE)*_BOARD_SIZE,
         max_chance_outcomes=0,
@@ -34,8 +62,9 @@ _GAME_INFO = pyspiel.GameInfo(
 class Game(pyspiel.Game):
     """A Gobblet game."""
 
-    def __init__(self, params={}):
-        super().__init__(_GAME_TYPE, _GAME_INFO, params)
+    def __init__(self, params=None):
+        super().__init__(_GAME_TYPE, _GAME_INFO, params or {})
+        self._params = params
 
     def new_initial_state(self):
         """Returns a state corresponding to the start of a game."""
@@ -43,7 +72,9 @@ class Game(pyspiel.Game):
 
     def make_py_observer(self, iig_obs_type=None, params=None):
         """Returns an object used for observing game state."""
-        return Observer(self)
+        del iig_obs_type
+        params.update(self._params)
+        return Observer(self, params)
 
 
 class State(pyspiel.State):
@@ -67,6 +98,7 @@ class State(pyspiel.State):
         """Returns id of the next player to move, or TERMINAL if game is over."""
         return pyspiel.PlayerId.TERMINAL if self._is_terminal else self._cur_player
 
+    # pylint: disable=too-many-branches
     def _legal_actions(self, player):
         legals = []
 
@@ -118,6 +150,7 @@ class State(pyspiel.State):
             self._cur_player = 1 - self._cur_player
 
     def _action_to_string(self, player, action_idx):
+        del player
         action = _action_from_idx(action_idx)
         return str(action)
 
@@ -133,13 +166,15 @@ class State(pyspiel.State):
 class Observer:
     """Observer, conforming to the PyObserver interface."""
 
-    def __init__(self, game):
+    def __init__(self, game, params):
+        self._egocentric_obs_tensor = params.get("egocentric_obs_tensor")
+
         ps = game.num_players()
         pieces = [
                 ["player", -1, [1]],
                 ["board", -1, [_BOARD_WIDTH, _BOARD_WIDTH, _NUM_SIZES, ps]],
                 ]
-        for i in range(len(pieces)):
+        for i, _ in enumerate(pieces):
             pieces[i][1] = np.prod(pieces[i][2])
 
         # Build the single flat tensor.
@@ -150,23 +185,27 @@ class Observer:
         self.dict = {}
         index = 0
         for name, size, shape in pieces:
-          self.dict[name] = self.tensor[index:index + size].reshape(shape)
-          index += size
+            self.dict[name] = self.tensor[index:index + size].reshape(shape)
+            index += size
 
     def set_from(self, state, player):
         """Updates `tensor` and `dict` to reflect `state` from PoV of `player`."""
+        del player
         self.tensor.fill(0)
-        if state.current_player() == 1:
+        if (not self._egocentric_obs_tensor) and state.current_player() == 1:
             self.dict["player"][0] = 1
         for y in range(state.board.shape[0]):
             for x in range(state.board.shape[1]):
                 for size in range(state.board.shape[2]):
                     p = state.board[y, x, size]
                     if p != pyspiel.PlayerId.INVALID:
+                        if self._egocentric_obs_tensor:
+                            p = 1 - p
                         self.dict["board"][y, x, size, p] = 1
 
     def string_from(self, state, player):
         """Observation of `state` from the PoV of `player`, as a string."""
+        del player
         rs_str = str(state.reserves)
         board_str = _board_to_string(state.board)
         return "reserves:\n"+rs_str+"\nboard:\n"+board_str
@@ -176,6 +215,7 @@ _ACTION_OFFSET = _NUM_SIZES * _BOARD_SIZE
 
 
 class Action:
+    """Action is a Gobblet action."""
 
     def __init__(self, reserves=-1, src=(-1, -1), dst=(-1, -1)):
         self.reserves = reserves
@@ -183,6 +223,7 @@ class Action:
         self.dst = dst
 
     def idx(self):
+        """idx returns the index of an action."""
         src = self.src[0]*_BOARD_WIDTH + self.src[1]
         dst = self.dst[0]*_BOARD_WIDTH + self.dst[1]
         if self.reserves != -1:
@@ -190,7 +231,7 @@ class Action:
         return _ACTION_OFFSET + src*_BOARD_SIZE + dst
 
     def __str__(self):
-        return "reserves {} src {} dst {}".format(self.reserves, self.src, self.dst)
+        return f"reserves {self.reserves} src {self.src} dst {self.dst}"
 
 
 def _action_from_idx(idx):
@@ -243,7 +284,9 @@ def _pieces_player(towers):
     return player
 
 
+# pylint: disable=too-few-public-methods
 class Piece:
+    """Piece is a Gobblet piece."""
 
     def __init__(self, player, size):
         self.player = player
@@ -265,13 +308,13 @@ def _board_to_string(board):
         for x in range(board.shape[1]):
             for size, player in enumerate(board[y, x]):
                 if player == 0:
-                    rstr[size] += "o "
+                    rstr[size] += "x "
                 elif player == 1:
-                    rstr[size] += " x"
+                    rstr[size] += " o"
                 else:
                     rstr[size] += "  "
             if x != board.shape[1]-1:
-                for size in range(len(rstr)):
+                for size, _ in enumerate(rstr):
                     rstr[size] += "|"
         row_strs.append("\n".join(rstr) + "\n")
 
@@ -283,6 +326,7 @@ def _board_to_string(board):
     return board_str
 
 
+# pylint: disable=protected-access
 def _state_from_tensor(board):
     game = pyspiel.load_game(_GAME_TYPE.short_name)
     s = State(game)
@@ -300,18 +344,18 @@ def _state_from_tensor(board):
                         placed.append(p)
                 if len(placed) == 0:
                     continue
-                elif len(placed) == 1:
+                if len(placed) == 1:
                     player = placed[0]
                     if s.reserves[player, sz] <= 0:
-                        raise Exception("{} {} {} {}".format(y, x, sz, placed))
+                        raise ValueError("Insufficient reserves")
                     s.reserves[player, sz] -= 1
                     s.board[y, x, sz] = player
                 else:
-                    raise Exception("{} {} {} {}".format(y, x, sz, placed))
+                    raise ValueError("Multiple pieces of same size")
 
     if _line_player(s.board) != pyspiel.PlayerId.INVALID:
-            s._is_terminal = True
-            s._player0_score = 1.0 if s._cur_player == 0 else -1.0
+        s._is_terminal = True
+        s._player0_score = 1.0 if s._cur_player == 0 else -1.0
 
     return s
 
