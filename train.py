@@ -27,6 +27,7 @@ def main():
     train_cfg = escher.TrainConfig(game)
     train_cfg.device_name = "cpu"
     train_cfg.evaluation_interval = 20
+    train_cfg.nashconv = True
     train_cfg.run_dir = args.run_dir
     train_cfg.setup()
     logging.info("run_dir \"%s\"", train_cfg.run_dir)

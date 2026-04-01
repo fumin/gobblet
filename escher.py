@@ -33,11 +33,21 @@ import torch
 import torch.utils.tensorboard as _
 
 from open_spiel.python.algorithms import exploitability as _
-from open_spiel.python.pytorch import deep_cfr as _
+from open_spiel.python.pytorch import deep_cfr
 
 import util
 
 # pylint: disable=invalid-name
+
+
+class TrunkMLP(torch.nn.Module):
+    def __init__(self, trunk, hidden_sizes, output_size):
+        super().__init__()
+        self.trunk = trunk
+        input_size = list(trunk.model.modules())[-2].out_features
+        self.head = deep_cfr.MLP(input_size, hidden_sizes, output_size)
+    def forward(self, x):
+        return self.head(self.trunk(x))
 
 
 class Config:
@@ -49,23 +59,24 @@ class Config:
         These parameters are designed for Kuhn poker to achieve an
         exploitability around 0.05 within 100 iterations.
         """
+        self.trunk = [256]
         self.value_traversals = 512
         self.value_exploration = 0.1
         self.value_memory_capacity = int(1e6)
-        self.value_net = [64]
+        self.value_net = []
         self.value_batch_size = 256
         self.value_batch_steps = 512
         self.value_learning_rate = 1e-3
 
         self.regret_traversals = 1024
         self.regret_memory_capacity = int(1e6)
-        self.regret_net = [64]
+        self.regret_net = []
         self.regret_batch_size = 256
         self.regret_batch_steps = 375
         self.regret_learning_rate = 1e-3
 
         self.avg_policy_memory_capacity = int(1e6)
-        self.avg_policy_net = [64]
+        self.avg_policy_net = []
         self.avg_policy_batch_size = 256
         self.avg_policy_batch_steps = 2500
         self.avg_policy_learning_rate = 1e-3
@@ -102,8 +113,8 @@ class Agent:
                 cfg.avg_policy_memory_capacity,
                 Behaviour(state=infoset, policy=policy, t=scalar),
         )
-        MLP = open_spiel.python.pytorch.deep_cfr.MLP
-        self.avg_policy_net = MLP(obs_dim, cfg.avg_policy_net, action_dim)
+        self.policy_trunk = deep_cfr.MLP(obs_dim, cfg.trunk[:-1], cfg.trunk[-1], torch.nn.ReLU())
+        self.avg_policy_net = TrunkMLP(self.policy_trunk, cfg.avg_policy_net, action_dim)
 
         # Initialize regret network.
         sr = StateRegret(state=infoset, regret=policy, mask=policy, t=scalar)
@@ -112,7 +123,7 @@ class Agent:
                 for _ in range(game.num_players())
         ]
         self.regret_nets = [
-                MLP(obs_dim, cfg.regret_net, action_dim)
+                TrunkMLP(self.policy_trunk, cfg.regret_net, action_dim)
                 for _ in range(game.num_players())
         ]
 
@@ -123,8 +134,9 @@ class Agent:
                 ReservoirBuffer.init(cfg.value_memory_capacity, sav)
                 for _ in range(game.num_players())
         ]
+        self.value_trunk = deep_cfr.MLP(history_dim, cfg.trunk[:-1], cfg.trunk[-1], torch.nn.ReLU())
         self.value_nets = [
-                MLP(history_dim, cfg.value_net, 1) for _ in range(game.num_players())
+                TrunkMLP(self.value_trunk, cfg.value_net, 1) for _ in range(game.num_players())
         ]
 
         self.num_touched = 0
@@ -263,7 +275,7 @@ def _train_regret(cfg, agent):
                 torch.from_numpy(buf.experience.t).to(cfg.device),
         )
         regret_net = agent.regret_nets[player]
-        regret_net.reset()
+        regret_net.head.reset()
         optimizer = torch.optim.Adam(
                 regret_net.parameters(), lr=agent.cfg.regret_learning_rate
         )
@@ -326,7 +338,6 @@ def _gather_value_data(game, agent, player):
                 uniform = mask / np.sum(mask)
                 sample_policy = epsilon * uniform + (1 - epsilon) * policy
                 action = np.random.choice(range(len(sample_policy)), p=sample_policy)
-                action = _win_action(state, action)
                 importance = policy[action] / sample_policy[action]
 
             # Add transition.
@@ -369,7 +380,7 @@ def _train_value(cfg, agent, player):
             torch.from_numpy(buf.experience.value).to(cfg.device),
     )
     value_net = agent.value_nets[player]
-    value_net.reset()
+    value_net.head.reset()
     optimizer = torch.optim.Adam(
             value_net.parameters(), lr=agent.cfg.value_learning_rate
     )
@@ -712,16 +723,3 @@ def _save_buffer(fpath, buffer):
 def _load_buffer(buffer, fpath):
     cp = torch.load(fpath)
     buffer.__dict__.update(cp)
-
-
-def _win_action(state, action):
-    player = state.current_player()
-    mask = state.legal_actions_mask()
-    for a, m in enumerate(mask):
-        if m == 0:
-            continue
-        child = state.child(a)
-        reward = child.returns()[player]
-        if reward == 1:
-            return a
-    return action
