@@ -8,6 +8,9 @@ import torcheval
 from torcheval import metrics as _
 
 
+_CHECKPOINT_FNAME = "checkpoint.pth"
+
+
 def atoi(s):
     try:
         i = int(s)
@@ -17,8 +20,9 @@ def atoi(s):
     return i, None
 
 
-def get_checkpoint_path(checkpoint_dir, epoch):
-    return os.path.join(checkpoint_dir, "checkpoint_{:06d}.pth".format(epoch))
+def get_checkpoint_path(cp_root, epoch):
+    cp_dir = os.path.join(cp_root, "checkpoint_{:06d}".format(epoch))
+    return os.path.join(cp_dir, _CHECKPOINT_FNAME)
 
 
 def get_paths_desc(fdir):
@@ -46,7 +50,7 @@ def get_paths_desc(fdir):
     return path_ms
 
 
-def load_checkpoint(checkpoint_dir):
+def load_checkpoint(cp_root):
     # Torch being stupid by refusing to run numpy when loading checkpoints.
     torch.serialization.add_safe_globals([
         np.core.multiarray._reconstruct,
@@ -57,12 +61,12 @@ def load_checkpoint(checkpoint_dir):
         np.dtypes.Float64DType,
     ])
     
-    paths = get_paths_desc(checkpoint_dir)
+    paths = get_paths_desc(cp_root)
     if len(paths) == 0:
         return None, ""
     
     for path_d in paths:
-        fpath = path_d["path"]
+        fpath = os.path.join(path_d["path"], _CHECKPOINT_FNAME)
         checkpoint= None
         err = None
         try:
@@ -76,8 +80,8 @@ def load_checkpoint(checkpoint_dir):
     return None, ""
 
 
-def delete_old_checkpoints(checkpoint_dir):
-    paths = get_paths_desc(checkpoint_dir)
+def delete_old_checkpoints(cp_root):
+    paths = get_paths_desc(cp_root)
     
     keep_num = 3
     if len(paths) <= keep_num:

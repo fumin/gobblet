@@ -650,9 +650,18 @@ def _save_agent_config(run_dir, agent):
         f.write(jstr)
 
 
-def _save_checkpoint(cp_dir, agent):
+def _save_checkpoint(cp_root, agent):
+    cp_path = util.get_checkpoint_path(cp_root, agent.t)
+    cp_dir = os.path.dirname(cp_path)
+    os.makedirs(cp_dir, exist_ok=True)
+
+    # Buffers.
     import gc
     gc.collect()
+    _save_buffer(os.path.join(cp_dir, "avg_policy_buffer"), agent.avg_policy_buffer)
+    for p, _ in enumerate(agent.regret_nets):
+        gc.collect()
+        _save_buffer(os.path.join(cp_dir, f"regret_buffer_{p}"), agent.regret_buffers[p])
 
     cp = {}
     cp["t"] = agent.t
@@ -664,23 +673,15 @@ def _save_checkpoint(cp_dir, agent):
     cp["avg_policy_t"] = agent.avg_policy_t
     cp["regret_t"] = agent.regret_t
     cp["value_t"] = agent.value_t
-
-    # Buffers.
-    cp["avg_policy_buffer"] = agent.avg_policy_buffer.__dict__
-    for p, _ in enumerate(agent.regret_nets):
-        cp["regret_buffer_{}".format(p)] = agent.regret_buffers[p].__dict__
-        # cp["value_buffer_{}".format(p)] = agent.value_buffers[p].__dict__
-
-    os.makedirs(cp_dir, exist_ok=True)
-    cp_path = util.get_checkpoint_path(cp_dir, agent.t)
     torch.save(cp, cp_path)
-    util.delete_old_checkpoints(cp_dir)
+
+    util.delete_old_checkpoints(cp_root)
 
 
-def _load_checkpoint(agent, cp_dir):
+def _load_checkpoint(agent, cp_root):
     torch.serialization.add_safe_globals([StateActionValue, StateRegret, Behaviour])
 
-    cp, cp_path = util.load_checkpoint(cp_dir)
+    cp, cp_path = util.load_checkpoint(cp_root)
     if not cp:
         logging.info("no checkpoint")
         return
@@ -696,12 +697,21 @@ def _load_checkpoint(agent, cp_dir):
     agent.value_t = cp["value_t"]
 
     # Buffers.
-    agent.avg_policy_buffer.__dict__.update(cp["avg_policy_buffer"])
+    cp_dir = os.path.dirname(cp_path)
+    _load_buffer(agent.avg_policy_buffer, os.path.join(cp_dir, "avg_policy_buffer"))
     for p, _ in enumerate(agent.regret_nets):
-        agent.regret_buffers[p].__dict__.update(cp["regret_buffer_{}".format(p)])
-        # agent.value_buffers[p].__dict__.update(cp["value_buffer_{}".format(p)])
+        _load_buffer(agent.regret_buffers[p], os.path.join(cp_dir, f"regret_buffer_{p}"))
 
     logging.info("loaded checkpoint %s", cp_path)
+
+
+def _save_buffer(fpath, buffer):
+    torch.save(buffer.__dict__, fpath)
+
+
+def _load_buffer(buffer, fpath):
+    cp = torch.load(fpath)
+    buffer.__dict__.update(cp)
 
 
 def _win_action(state, action):
