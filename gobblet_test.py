@@ -25,7 +25,51 @@ import gobblet
 class GobbletTest(absltest.TestCase):
     """Tests for gobblet game."""
 
-    def test_game(self):
+    def test_win_current_player(self):
+        """Test that current player wins when both players draw a line."""
+        sas = [
+                StateAction(None, None, [0, 0], gobblet.Action(reserves=1, dst=[0, 0])),
+                StateAction(None, None, [0, 0], gobblet.Action(reserves=2, dst=[0, 0])),
+                StateAction(None, None, [0, 0], gobblet.Action(reserves=1, dst=[0, 1])),
+                StateAction(None, None, [0, 0], gobblet.Action(reserves=1, dst=[1, 1])),
+                StateAction(None, None, [0, 0], gobblet.Action(reserves=2, dst=[0, 2])),
+                StateAction(None, None, [0, 0], gobblet.Action(reserves=2, dst=[1, 2])),
+                StateAction(None, None, [0, 0], gobblet.Action(reserves=0, dst=[1, 0])),
+                StateAction(None, None, [0, 0], gobblet.Action(src=[0, 0], dst=[1, 0])),
+                StateAction(None, None, [-1, 1], None)
+                ]
+        game = pyspiel.load_game("gobblet")
+        state = game.new_initial_state()
+        for sa in sas:
+            self.assertEqual(state.returns(), sa.returns)
+            if sa.action:
+                state.apply_action(sa.action.idx())
+            else:
+                self.assertTrue(state.is_terminal())
+
+    def test_suicide_current_player(self):
+        """Test that current player loses when opponent draws a line."""
+        sas = [
+                StateAction(None, None, [0, 0], gobblet.Action(reserves=1, dst=[0, 0])),
+                StateAction(None, None, [0, 0], gobblet.Action(reserves=2, dst=[0, 0])),
+                StateAction(None, None, [0, 0], gobblet.Action(reserves=1, dst=[0, 1])),
+                StateAction(None, None, [0, 0], gobblet.Action(reserves=1, dst=[1, 1])),
+                StateAction(None, None, [0, 0], gobblet.Action(reserves=2, dst=[0, 2])),
+                StateAction(None, None, [0, 0], gobblet.Action(reserves=2, dst=[2, 1])),
+                StateAction(None, None, [0, 0], gobblet.Action(reserves=0, dst=[1, 0])),
+                StateAction(None, None, [0, 0], gobblet.Action(src=[0, 0], dst=[1, 0])),
+                StateAction(None, None, [1, -1], None)
+                ]
+        game = pyspiel.load_game("gobblet")
+        state = game.new_initial_state()
+        for sa in sas:
+            self.assertEqual(state.returns(), sa.returns)
+            if sa.action:
+                state.apply_action(sa.action.idx())
+            else:
+                self.assertTrue(state.is_terminal())
+
+    def test_state(self):
         """Checks that information states and legal actions are correct."""
         sas = [
                 StateAction([0,
@@ -52,6 +96,7 @@ class GobbletTest(absltest.TestCase):
                              0, 0, 0, 0, 0, 0, 0, 0, 0,
                              0, 0, 0, 0, 0, 0, 0, 0, 0,
                              ],
+                            [0, 0],
                             gobblet.Action(reserves=1, dst=[1, 1])),
                 StateAction([1,
                              0, 0, 0, 0, 0, 0,
@@ -77,6 +122,7 @@ class GobbletTest(absltest.TestCase):
                              0, 0, 0, 0, 0, 0, 0, 0, 0,
                              0, 0, 0, 0, 0, 0, 0, 0, 0,
                              ],
+                            [0, 0],
                             gobblet.Action(reserves=0, dst=[2, 2])),
                 StateAction([0,
                              0, 0, 0, 0, 0, 0,
@@ -102,6 +148,7 @@ class GobbletTest(absltest.TestCase):
                              0, 0, 0, 0, 0, 0, 0, 0, 0,
                              0, 0, 0, 0, 0, 0, 0, 0, 0,
                              ],
+                            [0, 0],
                             gobblet.Action(reserves=-1, dst=[-1, -1])),
                 ]
         game = pyspiel.load_game("gobblet")
@@ -109,9 +156,10 @@ class GobbletTest(absltest.TestCase):
         for sa in sas:
             self.assertEqual(state.information_state_tensor(), sa.state)
             self.assertEqual(state.legal_actions_mask(), sa.mask)
+            self.assertEqual(state.returns(), sa.returns)
             state.apply_action(sa.action.idx())
 
-    def test_egocentric(self):
+    def test_state_egocentric(self):
         """Checks that egocentric information states are correct."""
         sas = [
                 StateAction([0,
@@ -138,6 +186,7 @@ class GobbletTest(absltest.TestCase):
                              0, 0, 0, 0, 0, 0, 0, 0, 0,
                              0, 0, 0, 0, 0, 0, 0, 0, 0,
                              ],
+                            [0, 0],
                             gobblet.Action(reserves=1, dst=[1, 1])),
                 StateAction([0,
                              0, 0, 0, 0, 0, 0,
@@ -163,6 +212,7 @@ class GobbletTest(absltest.TestCase):
                              0, 0, 0, 0, 0, 0, 0, 0, 0,
                              0, 0, 0, 0, 0, 0, 0, 0, 0,
                              ],
+                            [0, 0],
                             gobblet.Action(reserves=0, dst=[2, 2])),
                 StateAction([0,
                              0, 0, 0, 0, 0, 0,
@@ -188,6 +238,7 @@ class GobbletTest(absltest.TestCase):
                              0, 0, 0, 0, 0, 0, 0, 0, 0,
                              0, 0, 0, 0, 0, 0, 0, 0, 0,
                              ],
+                            [0, 0],
                             gobblet.Action(reserves=-1, dst=[-1, -1])),
                 ]
         game = pyspiel.load_game("gobblet", {"egocentric_obs_tensor": True})
@@ -195,6 +246,7 @@ class GobbletTest(absltest.TestCase):
         for sa in sas:
             self.assertEqual(state.information_state_tensor(), sa.state)
             self.assertEqual(state.legal_actions_mask(), sa.mask)
+            self.assertEqual(state.returns(), sa.returns)
             state.apply_action(sa.action.idx())
 
 
@@ -202,6 +254,7 @@ class StateAction(typing.NamedTuple):
     """StateAction holds a game's state and actions."""
     state: list
     mask: list
+    returns: list
     action: gobblet.Action
 
 

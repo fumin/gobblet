@@ -143,9 +143,12 @@ class State(pyspiel.State):
             self.board[action.src][size] = pyspiel.PlayerId.INVALID
             self.board[action.dst][size] = self._cur_player
 
-        if _line_player(self.board) != pyspiel.PlayerId.INVALID:
+        if _line_player(self._cur_player, self.board):
             self._is_terminal = True
             self._player0_score = 1.0 if self._cur_player == 0 else -1.0
+        elif _line_player(1-self._cur_player, self.board):
+            self._is_terminal = True
+            self._player0_score = -1.0 if self._cur_player == 0 else 1.0
         else:
             self._cur_player = 1 - self._cur_player
 
@@ -251,32 +254,32 @@ def _action_from_idx(idx):
     return Action(src=src, dst=dst)
 
 
-def _line_player(board):
+def _line_player(cur_player, board):
     for row in range(board.shape[0]):
         player = _pieces_player(board[row, :])
-        if player != pyspiel.PlayerId.INVALID:
-            return player
+        if player == cur_player:
+            return True
     for col in range(board.shape[1]):
         player = _pieces_player(board[:, col])
-        if player != pyspiel.PlayerId.INVALID:
-            return player
+        if player == cur_player:
+            return True
 
     diag = []
     for y in range(board.shape[0]):
         x = board.shape[0]-1 - y
         diag.append(board[y, x])
     player = _pieces_player(diag)
-    if player != pyspiel.PlayerId.INVALID:
-        return player
+    if player == cur_player:
+        return True
 
     negdiag = []
     for y in range(board.shape[0]):
         negdiag.append(board[y, y])
     player = _pieces_player(negdiag)
-    if player != pyspiel.PlayerId.INVALID:
-        return player
+    if player == cur_player:
+        return True
 
-    return pyspiel.PlayerId.INVALID
+    return False
 
 
 def _pieces_player(towers):
@@ -356,9 +359,12 @@ def _state_from_tensor(board):
                 else:
                     raise ValueError("Multiple pieces of same size")
 
-    if _line_player(s.board) != pyspiel.PlayerId.INVALID:
+    if _line_player(s._cur_player, s.board):
         s._is_terminal = True
         s._player0_score = 1.0 if s._cur_player == 0 else -1.0
+    elif _line_player(1-s._cur_player, s.board):
+        s._is_terminal = True
+        s._player0_score = -1.0 if s._cur_player == 0 else 1.0
 
     return s
 
