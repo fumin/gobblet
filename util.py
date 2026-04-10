@@ -53,7 +53,6 @@ def get_paths_desc(fdir):
 def load_checkpoint(cp_root):
     # Torch being stupid by refusing to run numpy when loading checkpoints.
     torch.serialization.add_safe_globals([
-        np.core.multiarray._reconstruct,
         np.ndarray,
         np.dtype,
         np.dtypes.Int64DType,

@@ -42,7 +42,7 @@ def main():
     cfg = _load_config(args.run_dir)
     agent = escher.Agent(game, cfg)
     cp_dir = os.path.join(args.run_dir, "checkpoint")
-    escher._load_checkpoint(agent, cp_dir)
+    escher._load_checkpoint(agent, cp_dir, True)
     logging.info("avg_policy_buffer %d", agent.avg_policy_buffer.add_calls)
     for p in range(len(agent.regret_buffers)):
         logging.info("regret_buffer_%d %d", p, agent.regret_buffers[p].add_calls)
