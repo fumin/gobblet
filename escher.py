@@ -206,7 +206,7 @@ def _train_avg_policy(cfg, agent):
 
         agent.avg_policy_net.train()
         for _ in range(epoch_steps):
-            indices = np.random.choice(
+            indices = cfg.rand.choice(
                     len(buf), size=(agent.cfg.avg_policy_batch_size,), replace=False
             )
             batch = Behaviour(
@@ -236,7 +236,7 @@ def _gather_regret_data(cfg, agent, player):
         while not state.is_terminal():
             if state.is_chance_node():
                 actions, probs = zip(*state.chance_outcomes())
-                a = np.random.choice(actions, p=probs)
+                a = cfg.rand.choice(actions, p=probs)
                 state.apply_action(a)
                 continue
 
@@ -260,8 +260,8 @@ def _gather_regret_data(cfg, agent, player):
                 sample_policy = mask / np.sum(mask)
             else:
                 sample_policy = policy
-            action = np.random.choice(range(len(sample_policy)), p=sample_policy)
-            state = state.child(action)
+            action = cfg.rand.choice(range(len(sample_policy)), p=sample_policy)
+            state.apply_action(action)
             agent.num_touched += 1
     if cfg.verbose:
         logging.info(
@@ -296,7 +296,7 @@ def _train_regret(cfg, agent):
             metrics = {}
 
             for _ in range(epoch_steps):
-                indices = np.random.choice(
+                indices = cfg.rand.choice(
                         len(buf), size=(agent.cfg.regret_batch_size,), replace=False
                 )
                 batch = StateRegret(
@@ -335,7 +335,7 @@ def _gather_value_data(cfg, agent, player):
         while True:
             if state.is_chance_node():
                 actions, probs = zip(*state.chance_outcomes())
-                a = np.random.choice(actions, p=probs)
+                a = cfg.rand.choice(actions, p=probs)
                 state.apply_action(a)
                 continue
 
@@ -351,7 +351,7 @@ def _gather_value_data(cfg, agent, player):
                 epsilon = agent.cfg.value_exploration
                 uniform = mask / np.sum(mask)
                 sample_policy = epsilon * uniform + (1 - epsilon) * policy
-                action = np.random.choice(range(len(sample_policy)), p=sample_policy)
+                action = cfg.rand.choice(range(len(sample_policy)), p=sample_policy)
                 importance = policy[action] / sample_policy[action]
 
             # Add transition.
@@ -364,7 +364,7 @@ def _gather_value_data(cfg, agent, player):
 
             if state.is_terminal():
                 break
-            state = state.child(action)
+            state.apply_action(action)
             agent.num_touched += 1
 
         value = np.zeros(transitions[0].returns.shape, dtype=float)
@@ -408,7 +408,7 @@ def _train_value(cfg, agent, player):
 
         agent.value_nets[player].train()
         for _ in range(epoch_steps):
-            indices = np.random.choice(
+            indices = cfg.rand.choice(
                     len(buf), size=(agent.cfg.value_batch_size,), replace=False
             )
             batch = StateActionValue(
@@ -541,6 +541,7 @@ class TrainConfig:
         self.nashconv = False
         self.games_vs_random = 1000
         self.verbose = False
+        self.rand = np.random.default_rng()
 
         self.run_dir = ""
 
@@ -570,7 +571,7 @@ def train(cfg, agent):
         agent.t += 1
         _train_regret(cfg, agent)
 
-        if agent.t % 5 == 0 and agent.t % cfg.evaluation_interval != 0:
+        if agent.t % 10 == 2 or agent.t % 10 == 7 or agent.t % 10 == 4 or agent.t % 10 == 9:
             _save_checkpoint(cp_dir, agent)
         if agent.t % cfg.evaluation_interval == 0:
             _train_avg_policy(cfg, agent)
@@ -585,7 +586,7 @@ def train(cfg, agent):
                         conv,
                 )
                 cfg.summary_writer.add_scalar("nashconv", conv, agent.t)
-            reward = _play_against_random(cfg.game, agent, cfg.games_vs_random)
+            reward = _play_against_random(cfg, agent, cfg.games_vs_random)
             logging.info(
                     "iteration %d states %d reward_vs_random %f",
                     agent.t,
@@ -596,15 +597,15 @@ def train(cfg, agent):
             cfg.summary_writer.flush()
 
 
-def _play_once_against_random(game, agent):
+def _play_once_against_random(cfg, agent):
     """Plays one game against a random policy and returns the reward."""
     reward = 0
-    for player in range(game.num_players()):
-        state = game.new_initial_state()
+    for player in range(cfg.game.num_players()):
+        state = cfg.game.new_initial_state()
         while not state.is_terminal():
             if state.is_chance_node():
                 outcomes, probs = zip(*state.chance_outcomes())
-                a = np.random.choice(outcomes, p=probs)
+                a = cfg.rand.choice(outcomes, p=probs)
                 state.apply_action(a)
                 continue
 
@@ -613,18 +614,18 @@ def _play_once_against_random(game, agent):
             else:
                 mask = np.array(state.legal_actions_mask(), dtype=int)
                 policy = mask / np.sum(mask)
-            action = np.random.choice(range(len(policy)), p=policy)
+            action = cfg.rand.choice(range(len(policy)), p=policy)
             state.apply_action(action)
 
         reward += state.returns()[player]
 
-    return reward / game.num_players()
+    return reward / cfg.game.num_players()
 
 
-def _play_against_random(game, agent, n):
+def _play_against_random(cfg, agent, n):
     reward = 0
     for _ in range(n):
-        reward += _play_once_against_random(game, agent)
+        reward += _play_once_against_random(cfg, agent)
     return reward / n
 
 

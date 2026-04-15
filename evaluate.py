@@ -50,7 +50,7 @@ def main():
     if args.game == "kuhn_poker":
         conv = escher._calc_nashconv(game, agent)
         logging.info("nashconv %f", conv)
-    reward = escher._play_against_random(game, agent, 1000)
+    reward = escher._play_against_random(escher.TrainConfig(game), agent, 1000)
     logging.info("reward_vs_random %f", reward)
 
 
