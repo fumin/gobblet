@@ -23,9 +23,10 @@ def main():
     game = pyspiel.load_game("gobblet", {"egocentric_obs_tensor": True})
 
     cfg = escher.Config()
-    cfg.trunk = [256, 256, 256]
+    cfg.trunk = [4096]
     cfg.value_traversals = 4096
     cfg.value_exploration = 0.05
+    cfg.value_memory_capacity = int(1e6)
     cfg.value_net = []
     cfg.value_batch_size = 2048
     cfg.value_batch_steps = 8192

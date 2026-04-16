@@ -3,6 +3,7 @@ import datetime
 import json
 import logging
 import os
+import tempfile
 
 import pyspiel
 
@@ -50,7 +51,11 @@ def main():
     if args.game == "kuhn_poker":
         conv = escher._calc_nashconv(game, agent)
         logging.info("nashconv %f", conv)
-    reward = escher._play_against_random(escher.TrainConfig(game), agent, 1000)
+    train_cfg = escher.TrainConfig(game)
+    with tempfile.TemporaryDirectory() as run_dir:
+        train_cfg.run_dir = run_dir
+        train_cfg.setup()
+    reward = escher._play_against_random(train_cfg, agent, 1000)
     logging.info("reward_vs_random %f", reward)
 
 

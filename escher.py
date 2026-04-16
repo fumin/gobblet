@@ -63,7 +63,7 @@ class Config:
         These parameters are designed for Kuhn poker to achieve an
         exploitability around 0.05 within 100 iterations.
         """
-        self.trunk = [256]
+        self.trunk = [128]
         self.value_traversals = 512
         self.value_exploration = 0.1
         self.value_memory_capacity = int(1e6)
@@ -480,12 +480,17 @@ def _get_value_loss(agent, player, batch):
     return torch.mean(loss)
 
 
-def _match_regret(net, obs, mask_np, device):
-    """Returns the policy after applying regret matching."""
+def _raw_regrets(net, obs, mask_np, device):
     with torch.no_grad():
         x = torch.from_numpy(obs).to(torch.float32).to(device)
         regrets = net(x)
         raw_regrets = regrets.cpu().numpy()
+    return raw_regrets
+
+
+def _match_regret(net, obs, mask_np, device):
+    """Returns the policy after applying regret matching."""
+    raw_regrets = _raw_regrets(net, obs, mask_np, device)
 
     regrets = np.clip(raw_regrets, a_min=0, a_max=None)
     regrets = regrets * mask_np
@@ -494,12 +499,18 @@ def _match_regret(net, obs, mask_np, device):
         return regrets / summed
 
     # Just use the best regret, if regrets cannot be normalized.
-    max_id, max_regret = -1, float("-inf")
-    for i, m in enumerate(mask_np):
-        if m == 1 and raw_regrets[i] > max_regret:
-            max_id, max_regret = i, raw_regrets[i]
-    policy = np.zeros(regrets.shape, dtype=regrets.dtype)
-    policy[max_id] = 1
+    # max_id, max_regret = -1, float("-inf")
+    # for i, m in enumerate(mask_np):
+    #     if m == 1 and raw_regrets[i] > max_regret:
+    #         max_id, max_regret = i, raw_regrets[i]
+    # policy = np.zeros(regrets.shape, dtype=regrets.dtype)
+    # policy[max_id] = 1
+
+    med = np.nanmedian(np.where(mask_np==1, raw_regrets, np.nan))
+    regrets = raw_regrets - med
+    regrets = np.clip(regrets, a_min=0, a_max=None)
+    regrets = regrets * mask_np
+    policy = regrets / np.sum(regrets)
     return policy
 
 
@@ -540,17 +551,19 @@ class TrainConfig:
         self.evaluation_interval = 1
         self.nashconv = False
         self.games_vs_random = 1000
+        self.seed = 0
         self.verbose = False
-        self.rand = np.random.default_rng()
 
         self.run_dir = ""
 
         # Inferred properties.
+        self.rand = None
         self.summary_writer = None
         self.device = None
 
     def setup(self):
         """setup sets up the inferred properties."""
+        self.rand = np.random.default_rng(self.seed)
         self.summary_writer = torch.utils.tensorboard.SummaryWriter(self.run_dir)
         self.device = torch.device(self.device_name)
 
