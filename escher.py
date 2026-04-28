@@ -24,6 +24,7 @@ of magnitude lower than DREAM and other baselines.
 import json
 import logging
 import os
+import sys
 import time
 import typing
 
@@ -71,6 +72,8 @@ class Config:
         self.value_batch_size = 256
         self.value_batch_steps = 512
         self.value_learning_rate = 1e-3
+        self.max_depth = 1
+        self.max_width = sys.maxsize
 
         self.regret_traversals = 1024
         self.regret_memory_capacity = int(1e6)
@@ -126,8 +129,9 @@ class Agent:
                 ReservoirBuffer.init(cfg.regret_memory_capacity, sr)
                 for _ in range(game.num_players())
         ]
+        self.regret_trunk = deep_cfr.MLP(obs_dim, cfg.trunk[:-1], cfg.trunk[-1], torch.nn.ReLU())
         self.regret_nets = [
-                TrunkMLP(self.policy_trunk, cfg.regret_net, action_dim)
+                TrunkMLP(self.regret_trunk, cfg.regret_net, action_dim)
                 for _ in range(game.num_players())
         ]
 
@@ -248,7 +252,7 @@ def _gather_regret_data(cfg, agent, player):
 
             # Add data to buffer.
             if current_player == player:
-                regret = _get_regret(agent, state, policy, game.num_players())
+                regret = _get_regret(agent, state, game.num_players())
                 sr = StateRegret(state=obs, regret=regret, mask=mask, t=agent.t)
                 agent.regret_buffers[player].append(sr)
             else:
@@ -514,16 +518,60 @@ def _match_regret(net, obs, mask_np, device):
     return policy
 
 
-def _get_regret(agent, state, policy, num_players):
+def _get_regret(agent, state, num_players):
     """Returns the regret for the current state."""
     player = state.current_player()
+    max_depth = agent.cfg.max_depth
+    value, children_values = _get_value_recursive(
+            1, max_depth, agent, player, state, num_players)
+    regret = children_values - value
+    return regret
 
-    mask = state.legal_actions_mask()
-    history = np.zeros([len(mask), agent.history_dim], dtype=float)
+
+def _get_value_recursive(depth, max_depth, agent, player, state, num_players):
+    if state.is_terminal():
+        return state.returns()[player], []
+
+    if depth == max_depth:
+        return _get_value(agent, player, state, num_players)
+
+    mask = np.array(state.legal_actions_mask(), dtype=int)
+    if state.is_chance_node():
+        policy = [c[1] for c in state.chance_outcomes()]
+    else:
+        obs = np.array(state.information_state_tensor(), dtype=float)
+        net = agent.regret_nets[state.current_player()]
+        policy = _match_regret(net, obs, mask, agent.device)
+    max_width = min(agent.cfg.max_width+1, np.sum(mask))
+    cutoff = np.partition(policy, -max_width)[-max_width]
+
+    _, children_values = _get_value(agent, player, state, num_players)
     for a, m in enumerate(mask):
-        if m == 1:
-            child = state.child(a)
-            history[a] = _state_history(num_players, child)
+        if m == 0:
+            continue
+        if policy[a] <= cutoff:
+            continue
+        child = state.child(a)
+        children_values[a], _ = _get_value_recursive(
+                depth+1, max_depth, agent, player, child, num_players)
+
+    value = np.sum(policy * children_values)
+    return value, children_values
+
+
+def _get_value(agent, player, state, num_players):
+    if state.is_terminal():
+        return state.returns()[player], []
+
+    mask = np.array(state.legal_actions_mask(), dtype=int)
+    history = np.zeros([len(mask), agent.history_dim], dtype=float)
+    children = [None] * history.shape[0]
+    for a, m in enumerate(mask):
+        if m == 0:
+            continue
+        child = state.child(a)
+        history[a] = _state_history(num_players, child)
+        children[a] = child
 
     with torch.no_grad():
         x = torch.from_numpy(history).to(torch.float32).to(agent.device)
@@ -531,9 +579,21 @@ def _get_regret(agent, state, policy, num_players):
         vals = torch.squeeze(vals, dim=[1])
         children_values = vals.cpu().numpy()
 
+    for a, m in enumerate(mask):
+        if m == 0:
+            continue
+        child = children[a]
+        if child.is_terminal():
+            children_values[a] = child.returns()[player]
+
+    if state.is_chance_node():
+        policy = [c[1] for c in state.chance_outcomes()]
+    else:
+        obs = np.array(state.information_state_tensor(), dtype=float)
+        net = agent.regret_nets[state.current_player()]
+        policy = _match_regret(net, obs, mask, agent.device)
     value = np.sum(policy * children_values)
-    regret = children_values - value
-    return regret
+    return value, children_values
 
 
 class TrainConfig:

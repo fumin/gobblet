@@ -31,6 +31,8 @@ def main():
     cfg.value_batch_size = 2048
     cfg.value_batch_steps = 8192
     cfg.value_learning_rate = 1e-3
+    cfg.max_depth = 3
+    cfg.max_width = 2
     cfg.regret_traversals = 2048
     cfg.regret_memory_capacity = int(1e6)
     cfg.regret_net = []
