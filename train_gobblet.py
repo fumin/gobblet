@@ -1,6 +1,7 @@
 import argparse
 import datetime
 import logging
+import sys
 
 import pyspiel
 
@@ -23,8 +24,8 @@ def main():
     game = pyspiel.load_game("gobblet", {"egocentric_obs_tensor": True})
 
     cfg = escher.Config()
-    cfg.trunk = [4096]
-    cfg.value_traversals = 4096
+    cfg.trunk = [256, 256, 256]
+    cfg.value_traversals = 8192
     cfg.value_exploration = 0.05
     cfg.value_memory_capacity = int(1e6)
     cfg.value_net = []
@@ -34,12 +35,13 @@ def main():
     cfg.max_depth = 3
     cfg.max_width = 2
     cfg.regret_traversals = 2048
-    cfg.regret_memory_capacity = int(1e6)
+    cfg.regret_exploration = 0.05
+    cfg.regret_memory_capacity = int(2e6)
     cfg.regret_net = []
     cfg.regret_batch_size = 2048
     cfg.regret_batch_steps = 8192
     cfg.regret_learning_rate = 1e-3
-    cfg.avg_policy_memory_capacity = int(1e6)
+    cfg.avg_policy_memory_capacity = int(2e6)
     cfg.avg_policy_net = []
     cfg.avg_policy_batch_size = 2048
     cfg.avg_policy_batch_steps = 16384

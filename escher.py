@@ -76,6 +76,7 @@ class Config:
         self.max_width = sys.maxsize
 
         self.regret_traversals = 1024
+        self.regret_exploration = 1
         self.regret_memory_capacity = int(1e6)
         self.regret_net = []
         self.regret_batch_size = 256
@@ -113,9 +114,9 @@ class Agent:
 
         # Initialize average policy network.
         ReservoirBuffer = open_spiel.python.pytorch.deep_cfr.ReservoirBuffer
-        infoset = np.zeros(obs_dim, dtype=float)
-        policy = np.zeros(action_dim, dtype=float)
-        scalar = np.array(0, dtype=float)
+        infoset = np.zeros(obs_dim, dtype=np.float32)
+        policy = np.zeros(action_dim, dtype=np.float32)
+        scalar = np.array(0, dtype=np.float32)
         self.avg_policy_buffer = ReservoirBuffer.init(
                 cfg.avg_policy_memory_capacity,
                 Behaviour(state=infoset, policy=policy, t=scalar),
@@ -136,10 +137,10 @@ class Agent:
         ]
 
         # Initialize value network.
-        history = np.zeros(self.history_dim, dtype=float)
-        sav = StateActionValue(state=history, action=scalar, value=scalar)
+        history = np.zeros(self.history_dim, dtype=np.float32)
+        sv = StateValue(state=history, value=scalar)
         self.value_buffers = [
-                ReservoirBuffer.init(cfg.value_memory_capacity, sav)
+                ReservoirBuffer.init(cfg.value_memory_capacity, sv)
                 for _ in range(game.num_players())
         ]
         self.value_trunk = deep_cfr.MLP(
@@ -237,6 +238,7 @@ def _gather_regret_data(cfg, agent, player):
     for _ in range(agent.cfg.regret_traversals):
         state = game.new_initial_state()
         agent.num_touched += 1
+        importance = 1
         while not state.is_terminal():
             if state.is_chance_node():
                 actions, probs = zip(*state.chance_outcomes())
@@ -251,22 +253,30 @@ def _gather_regret_data(cfg, agent, player):
             policy = _match_regret(agent.regret_nets[current_player], obs, mask, agent.device)
 
             # Add data to buffer.
+            t = 0.1*min(importance, 1e2) * agent.t
             if current_player == player:
-                regret = _get_regret(agent, state, game.num_players())
-                sr = StateRegret(state=obs, regret=regret, mask=mask, t=agent.t)
+                regret = _get_regret(agent, state, policy, game.num_players())
+                sr = StateRegret(state=obs, regret=regret, mask=mask, t=t)
                 agent.regret_buffers[player].append(sr)
             else:
-                behaviour = Behaviour(state=obs, policy=policy, t=agent.t)
+                behaviour = Behaviour(state=obs, policy=policy, t=t)
                 agent.avg_policy_buffer.append(behaviour)
 
-            # Update state with policy.
+            # Sample action.
+            uniform = mask / np.sum(mask)
             if current_player == player:
-                sample_policy = mask / np.sum(mask)
+                epsilon = agent.cfg.regret_exploration
+                sample_policy = epsilon * uniform + (1-epsilon) * policy
             else:
                 sample_policy = policy
             action = cfg.rand.choice(range(len(sample_policy)), p=sample_policy)
+
+            # Apply action.
             state.apply_action(action)
             agent.num_touched += 1
+            if current_player == player:
+                importance *= 1. / sample_policy[action]
+
     if cfg.verbose:
         logging.info(
                 "gather regret %d player %d duration %d secs",
@@ -377,14 +387,11 @@ def _gather_value_data(cfg, agent, player):
 
             value = tn.importance * (tn.returns + value)
             value_buffer.append(
-                    StateActionValue(
-                            state=tn.history, action=tn.action, value=value[player]
-                    )
-            )
+                    StateValue(state=tn.history, value=value[player]))
     if cfg.verbose:
         logging.info(
-                "gather value %d player %d duration %d secs",
-                agent.t, player, int(time.time()-start_time))
+                "gather value %d player %d samples %d duration %d secs",
+                agent.t, player, len(value_buffer), int(time.time()-start_time))
 
 
 def _train_value(cfg, agent, player):
@@ -397,7 +404,6 @@ def _train_value(cfg, agent, player):
     buf = agent.value_buffers[player]
     dataset = torch.utils.data.TensorDataset(
             torch.from_numpy(buf.experience.state).to(cfg.device),
-            torch.from_numpy(buf.experience.action).to(cfg.device),
             torch.from_numpy(buf.experience.value).to(cfg.device),
     )
     value_net = agent.value_nets[player]
@@ -415,10 +421,9 @@ def _train_value(cfg, agent, player):
             indices = cfg.rand.choice(
                     len(buf), size=(agent.cfg.value_batch_size,), replace=False
             )
-            batch = StateActionValue(
+            batch = StateValue(
                     state=dataset.tensors[0][indices],
-                    action=dataset.tensors[1][indices],
-                    value=dataset.tensors[2][indices],
+                    value=dataset.tensors[1][indices],
             )
 
             loss = _get_value_loss(agent, player, batch)
@@ -484,7 +489,7 @@ def _get_value_loss(agent, player, batch):
     return torch.mean(loss)
 
 
-def _raw_regrets(net, obs, mask_np, device):
+def _raw_regrets(net, obs, device):
     with torch.no_grad():
         x = torch.from_numpy(obs).to(torch.float32).to(device)
         regrets = net(x)
@@ -494,36 +499,41 @@ def _raw_regrets(net, obs, mask_np, device):
 
 def _match_regret(net, obs, mask_np, device):
     """Returns the policy after applying regret matching."""
-    raw_regrets = _raw_regrets(net, obs, mask_np, device)
+    raw_regrets = _raw_regrets(net, obs, device)
 
     regrets = np.clip(raw_regrets, a_min=0, a_max=None)
     regrets = regrets * mask_np
     summed = np.sum(regrets)
     if summed > 1e-6:
-        return regrets / summed
+        policy = regrets / summed
+    else:
+        # Just use the best regret, if regrets cannot be normalized.
+        max_id = np.nanargmax(np.where(mask_np==1, raw_regrets, np.nan))
+        policy = np.zeros(regrets.shape, dtype=regrets.dtype)
+        policy[max_id] = 1
 
-    # Just use the best regret, if regrets cannot be normalized.
-    # max_id, max_regret = -1, float("-inf")
-    # for i, m in enumerate(mask_np):
-    #     if m == 1 and raw_regrets[i] > max_regret:
-    #         max_id, max_regret = i, raw_regrets[i]
-    # policy = np.zeros(regrets.shape, dtype=regrets.dtype)
-    # policy[max_id] = 1
+        # med = np.nanmedian(np.where(mask_np==1, raw_regrets, np.nan))
+        # regrets = raw_regrets - med
+        # regrets = np.clip(regrets, a_min=0, a_max=None)
+        # regrets = regrets * mask_np
+        # policy = regrets / np.sum(regrets)
 
-    med = np.nanmedian(np.where(mask_np==1, raw_regrets, np.nan))
-    regrets = raw_regrets - med
-    regrets = np.clip(regrets, a_min=0, a_max=None)
-    regrets = regrets * mask_np
-    policy = regrets / np.sum(regrets)
     return policy
 
 
-def _get_regret(agent, state, num_players):
+def _get_regret(agent, state, policy, num_players):
     """Returns the regret for the current state."""
     player = state.current_player()
     max_depth = agent.cfg.max_depth
-    value, children_values = _get_value_recursive(
-            1, max_depth, agent, player, state, num_players)
+
+    if max_depth == 1:
+        # Make code run faster by using the pre-computed policy.
+        value, children_values = _get_value_with_policy(
+                agent, player, state, policy, num_players)
+    else:
+        value, children_values = _get_value_recursive(
+                1, max_depth, agent, player, state, num_players)
+
     regret = children_values - value
     return regret
 
@@ -560,6 +570,10 @@ def _get_value_recursive(depth, max_depth, agent, player, state, num_players):
 
 
 def _get_value(agent, player, state, num_players):
+    return _get_value_with_policy(agent, player, state, None, num_players)
+
+
+def _get_value_with_policy(agent, player, state, policy, num_players):
     if state.is_terminal():
         return state.returns()[player], []
 
@@ -586,12 +600,13 @@ def _get_value(agent, player, state, num_players):
         if child.is_terminal():
             children_values[a] = child.returns()[player]
 
-    if state.is_chance_node():
-        policy = [c[1] for c in state.chance_outcomes()]
-    else:
-        obs = np.array(state.information_state_tensor(), dtype=float)
-        net = agent.regret_nets[state.current_player()]
-        policy = _match_regret(net, obs, mask, agent.device)
+    if policy is None:
+        if state.is_chance_node():
+            policy = [c[1] for c in state.chance_outcomes()]
+        else:
+            obs = np.array(state.information_state_tensor(), dtype=float)
+            net = agent.regret_nets[state.current_player()]
+            policy = _match_regret(net, obs, mask, agent.device)
     value = np.sum(policy * children_values)
     return value, children_values
 
@@ -727,9 +742,8 @@ class Transition(typing.NamedTuple):
     returns: np.ndarray
 
 
-class StateActionValue(typing.NamedTuple):
+class StateValue(typing.NamedTuple):
     state: np.ndarray
-    action: np.ndarray
     value: np.ndarray
 
 
@@ -788,7 +802,7 @@ def _save_checkpoint(cp_root, agent):
 
 
 def _load_checkpoint(agent, cp_root, with_buffers):
-    torch.serialization.add_safe_globals([StateActionValue, StateRegret, Behaviour])
+    torch.serialization.add_safe_globals([StateValue, StateRegret, Behaviour])
 
     cp, cp_path = util.load_checkpoint(cp_root)
     if not cp:
@@ -834,7 +848,7 @@ def _load_buffer(buffer, dst_dir):
             epr_dir = os.path.join(dst_dir, "experience")
             for ek in v._fields:
                 fpath = os.path.join(epr_dir, ek+".npy")
-                getattr(v, ek)[:] = np.load(fpath)
+                getattr(v, ek)[:] = np.load(fpath, mmap_mode="r")
         else:
             fpath = os.path.join(dst_dir, k+".npy")
             buffer.__dict__[k] = np.load(fpath)

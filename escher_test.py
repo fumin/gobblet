@@ -67,8 +67,8 @@ class EscherTest(parameterized.TestCase):
         # Append data to buffer.
         obs_dim = game.information_state_tensor_size()
         action_dim = game.num_distinct_actions()
-        infoset = np.zeros(obs_dim, dtype=float)
-        policy = np.zeros(action_dim, dtype=float)
+        infoset = np.zeros(obs_dim, dtype=np.float32)
+        policy = np.zeros(action_dim, dtype=np.float32)
         infoset[0] = 3.14159
         beh = escher.Behaviour(state=infoset, policy=policy, t=321)
         agent_saved.avg_policy_buffer.append(beh)
