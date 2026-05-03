@@ -333,8 +333,7 @@ def _board_to_string(board):
 
 
 # pylint: disable=protected-access
-def _state_from_tensor(current_player, board):
-    game = pyspiel.load_game(_GAME_TYPE.short_name)
+def _state_from_tensor(game, current_player, board):
     num_players = game.num_players()
     s = State(game)
     s._cur_player = current_player

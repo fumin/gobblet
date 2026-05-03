@@ -188,10 +188,13 @@ public:
     {
         Move best{};
         State max_next = 0;
+	std::cout << std::endl;
         for (auto& m : get_moves(s))
         {
-	    // std::cout << m.start << "," << m.end << " " << boardBin(canonical(swap(move(s, m)))) << std::endl;
             State next = *lookup(canonical(swap(move(s, m))));
+	    int value = unpack_value(next);
+	    std::size_t moves = unpack_moves(next);
+	    std::cout << "(" << m.start << "," << m.end << ") " << (value == 1 ? "win" : (value == 0 ? "draw" : "lose")) << " in " << moves << " moves" << std::endl;
             if (next > max_next)
             {
                 max_next = next;

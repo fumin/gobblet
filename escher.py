@@ -41,6 +41,27 @@ import util
 # pylint: disable=invalid-name
 
 
+class StateValueN:
+    def __init__(self, state, value, n):
+        self.state = state
+        self.value = value
+        self.n = n
+
+
+class ValueBuffer:
+    """ValueBuffer is a buffer for game values."""
+
+    def __init__(self):
+        self.m = {}
+
+    def append(self, sv):
+        k = str(sv.state)
+        svn = self.m.get(k, StateValueN(sv.state, 0, 0))
+        svn.value += sv.value
+        svn.n += 1
+        self.m[k] = svn
+
+
 class TrunkMLP(torch.nn.Module):
     """TrunkMLP is a MLP with a shared trunk."""
 
@@ -135,6 +156,7 @@ class Agent:
                 TrunkMLP(self.regret_trunk, cfg.regret_net, action_dim)
                 for _ in range(game.num_players())
         ]
+        self.regret_policy_caches = [{} for _ in range(game.num_players())]
 
         # Initialize value network.
         history = np.zeros(self.history_dim, dtype=np.float32)
@@ -250,7 +272,7 @@ def _gather_regret_data(cfg, agent, player):
             current_player = state.current_player()
             obs = np.array(state.information_state_tensor(), dtype=float)
             mask = np.array(state.legal_actions_mask(), dtype=int)
-            policy = _match_regret(agent.regret_nets[current_player], obs, mask, agent.device)
+            policy = _match_regret(agent, current_player, obs, mask)
 
             # Add data to buffer.
             t = 0.1*min(importance, 1e2) * agent.t
@@ -331,10 +353,13 @@ def _train_regret(cfg, agent):
 
             for k, v in metrics.items():
                 cfg.summary_writer.add_scalar(k, v.compute(), agent.regret_t)
+
+        cache_size = len(agent.regret_policy_caches[player])
+        agent.regret_policy_caches[player] = {}
         if cfg.verbose:
             logging.info(
-                    "train regret %d player %d duration %d secs",
-                    agent.t, player, int(time.time()-start_time))
+                    "train regret %d player %d cache %d duration %d secs",
+                    agent.t, player, cache_size, int(time.time()-start_time))
 
 
 def _gather_value_data(cfg, agent, player):
@@ -342,6 +367,7 @@ def _gather_value_data(cfg, agent, player):
     start_time = time.time()
     value_buffer = agent.value_buffers[player]
     value_buffer.clear()
+    vbuf = ValueBuffer()
     for _ in range(agent.cfg.value_traversals):
         state = cfg.game.new_initial_state()
         agent.num_touched += 1
@@ -358,8 +384,7 @@ def _gather_value_data(cfg, agent, player):
                 # Get policy.
                 obs = np.array(state.information_state_tensor(), dtype=float)
                 mask = np.array(state.legal_actions_mask(), dtype=int)
-                regret_net = agent.regret_nets[state.current_player()]
-                policy = _match_regret(regret_net, obs, mask, agent.device)
+                policy = _match_regret(agent, state.current_player(), obs, mask)
 
                 # Sample action.
                 epsilon = agent.cfg.value_exploration
@@ -386,8 +411,12 @@ def _gather_value_data(cfg, agent, player):
             tn = transitions[i]
 
             value = tn.importance * (tn.returns + value)
-            value_buffer.append(
+            vbuf.append(
                     StateValue(state=tn.history, value=value[player]))
+
+    for _, svn in vbuf.m.items():
+        value_buffer.append(
+                StateValue(state=svn.state, value=svn.value/svn.n))
     if cfg.verbose:
         logging.info(
                 "gather value %d player %d samples %d duration %d secs",
@@ -418,9 +447,12 @@ def _train_value(cfg, agent, player):
 
         agent.value_nets[player].train()
         for _ in range(epoch_steps):
-            indices = cfg.rand.choice(
-                    len(buf), size=(agent.cfg.value_batch_size,), replace=False
-            )
+            if len(buf) < agent.cfg.value_batch_size:
+                indices = range(len(buf))
+            else:
+                indices = cfg.rand.choice(
+                        len(buf), size=(agent.cfg.value_batch_size,),
+                        replace=False)
             batch = StateValue(
                     state=dataset.tensors[0][indices],
                     value=dataset.tensors[1][indices],
@@ -497,9 +529,15 @@ def _raw_regrets(net, obs, device):
     return raw_regrets
 
 
-def _match_regret(net, obs, mask_np, device):
+def _match_regret(agent, player, obs, mask_np):
     """Returns the policy after applying regret matching."""
-    raw_regrets = _raw_regrets(net, obs, device)
+    policy_cache = agent.regret_policy_caches[player]
+    obs_key = str(obs)
+    if obs_key in agent.regret_policy_caches[player]:
+        return policy_cache[obs_key]
+
+    net = agent.regret_nets[player]
+    raw_regrets = _raw_regrets(net, obs, agent.device)
 
     regrets = np.clip(raw_regrets, a_min=0, a_max=None)
     regrets = regrets * mask_np
@@ -518,6 +556,7 @@ def _match_regret(net, obs, mask_np, device):
         # regrets = regrets * mask_np
         # policy = regrets / np.sum(regrets)
 
+    policy_cache[obs_key] = policy
     return policy
 
 
@@ -550,8 +589,7 @@ def _get_value_recursive(depth, max_depth, agent, player, state, num_players):
         policy = [c[1] for c in state.chance_outcomes()]
     else:
         obs = np.array(state.information_state_tensor(), dtype=float)
-        net = agent.regret_nets[state.current_player()]
-        policy = _match_regret(net, obs, mask, agent.device)
+        policy = _match_regret(agent, state.current_player(), obs, mask)
     max_width = min(agent.cfg.max_width+1, np.sum(mask))
     cutoff = np.partition(policy, -max_width)[-max_width]
 
@@ -605,8 +643,7 @@ def _get_value_with_policy(agent, player, state, policy, num_players):
             policy = [c[1] for c in state.chance_outcomes()]
         else:
             obs = np.array(state.information_state_tensor(), dtype=float)
-            net = agent.regret_nets[state.current_player()]
-            policy = _match_regret(net, obs, mask, agent.device)
+            policy = _match_regret(agent, state.current_player(), obs, mask)
     value = np.sum(policy * children_values)
     return value, children_values
 
